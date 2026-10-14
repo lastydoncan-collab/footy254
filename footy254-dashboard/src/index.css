@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: #07130e;
+}
+
+/* Kenyan-flag stripe: black, red, white, green. Used once in the header and
+   once in the footer so it reads as a brand mark, not decoration. */
+.flag-stripe {
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    #000 0 25%,
+    #f2545b 25% 50%,
+    #f3efe4 50% 75%,
+    #34c077 75% 100%
+  );
+}
+
+.page-glow {
+  background:
+    radial-gradient(60rem 28rem at 85% -10%, rgba(52, 192, 119, 0.16), transparent 60%),
+    radial-gradient(40rem 24rem at -10% 0%, rgba(242, 84, 91, 0.10), transparent 60%),
+    linear-gradient(180deg, #0a1b13 0%, #07130e 45%);
+}
+
+.font-display-italic {
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+:focus-visible {
+  outline: 2px solid #f3efe4;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  background: #07130e;
+  color: white;
+  font-family: Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  min-height: 100%;
+}
+
+/* Form fields: light fill with dark text so typed text and placeholders are
+   always readable on the dark green cards (Login, Register, Settings, ...). */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  background-color: #f3efe4;
+  color: #07130e;
+  border: 1.5px solid #9fb8a9;
+  caret-color: #07130e;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #5b6b62;
+  opacity: 1;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  border-color: #f2545b;
+  box-shadow: 0 0 0 3px rgba(242, 84, 91, 0.35);
+  outline: none;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Browser autofill would otherwise paint its own colours over the field. */
+input:-webkit-autofill,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #07130e;
+  box-shadow: 0 0 0 1000px #f3efe4 inset;
+  caret-color: #07130e;
+}

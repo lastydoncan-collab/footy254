@@ -1,0 +1,9 @@
+FOOTY254 full update (everything since your ufootb zip). Copy these folders/files over C:\Dev\ufootb
+(Replace). Your .venv, node_modules and .env are not in this zip, so they stay as they are.
+
+1. Stop the backend (Ctrl+C). With (.venv) active, from C:\Dev\ufootb:
+      python -m database.migrate          <- adds the new profile/2FA/card columns (safe to repeat)
+      python -m uvicorn main:app --reload
+2. Frontend: Ctrl+C, then "npm run dev". Open the address Vite prints, hard refresh (Ctrl+Shift+R).
+3. Optional .env additions (see .env.example): PAYSTACK_SECRET_KEY (card payments stay off while empty),
+   MPESA_PARTY_B (Till only). footy254-dashboard\.env: VITE_SUPPORT_EMAIL / PHONE / WHATSAPP.

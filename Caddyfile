@@ -1,0 +1,6 @@
+# Automatic HTTPS (Let's Encrypt) for {$DOMAIN}. Caddy forwards the visitor's
+# real IP in X-Forwarded-For and preserves the Host header by default.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8000
+}

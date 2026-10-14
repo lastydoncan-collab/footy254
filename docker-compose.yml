@@ -1,0 +1,65 @@
+# One command, whole stack:   docker compose up -d --build
+# Then create your first admin:
+#   docker compose exec app python -m scripts.create_admin you@example.com
+#
+# HTTPS on a public domain (automatic certificates via Caddy):
+#   set DOMAIN, APP_BIND=127.0.0.1, FORWARDED_ALLOW_IPS=* in .env, then
+#   docker compose --profile https up -d --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${FOOTY254_DB_NAME:-postgres}
+      POSTGRES_USER: ${FOOTY254_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${FOOTY254_DB_PASSWORD:?Set FOOTY254_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${FOOTY254_DB_USER:-postgres} -d ${FOOTY254_DB_NAME:-footy254}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      FOOTY254_DB_HOST: db
+      FOOTY254_DB_PORT: "5432"
+      FOOTY254_DB_SSLMODE: disable
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8000}:8000"
+    volumes:
+      - models:/app/ml_pipeline/models
+      - data:/app/data
+
+  caddy:
+    profiles: ["https"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  models:
+  data:
+  caddy_data:
+  caddy_config:

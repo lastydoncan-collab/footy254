@@ -1,0 +1,36 @@
+{
+  "name": "FOOTY254 AI",
+  "short_name": "FOOTY254",
+  "description": "Mobile football prediction app with live AI match probabilities.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07130e",
+  "theme_color": "#07130e",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "id": "/",
+  "scope": "/",
+  "lang": "en",
+  "categories": [
+    "sports"
+  ]
+}

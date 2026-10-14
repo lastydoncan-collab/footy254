@@ -1,0 +1,23 @@
+# FOOTY254 backend dependencies (Python 3.11 - 3.12)
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+slowapi>=0.1.9,<1.0
+
+psycopg2-binary>=2.9,<3.0
+requests>=2.32,<3.0
+APScheduler>=3.10,<4.0
+python-dotenv>=1.0,<2.0
+
+# Auth. python-jose < 3.4 has known CVEs. passlib was removed: it is
+# unmaintained and crashes against current bcrypt releases.
+python-jose[cryptography]>=3.4.0,<4.0
+bcrypt>=4.0,<6.0
+
+# ML. The shipped model files were trained with scikit-learn 1.8.0; pickles
+# are only guaranteed to load on the exact version that wrote them.
+numpy>=1.26,<3.0
+pandas>=2.2,<3.0
+scikit-learn==1.8.0
+joblib>=1.4,<2.0
