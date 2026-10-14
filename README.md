@@ -1,3 +1,6 @@
+# footy254
+Football Predicition AI App
+
 # FOOTY254 AI
 
 AI football match analysis and prediction: FastAPI backend, PostgreSQL, scikit-learn
