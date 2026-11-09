@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+﻿from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
@@ -13,14 +13,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_DAYS_AHEAD = 30
 
 TRACKED_COMPETITION_CODES = (
-    "PL",      # Premier League
-    "PD",      # La Liga
-    "BL1",     # Bundesliga
-    "SA",      # Serie A
-    "FL1",     # Ligue 1
-    "ELC",     # Championship
-    "CL",      # Champions League
-    "WC"       #FIFA World Cup
+    "PL",   # Premier League
+    "PD",   # La Liga
+    "BL1",  # Bundesliga
+    "SA",   # Serie A
+    "FL1",  # Ligue 1
+    "ELC",  # Championship
+    "CL",   # UEFA Champions League
+    "WC",   # FIFA World Cup
+    "DED",  # Eredivisie
+    "BSA",  # Campeonato Brasileiro Série A
+    "PPL",  # Primeira Liga
+    "EC",   # European Championship
 )
 
 VALID_STATUSES = {
@@ -220,3 +224,4 @@ def fetch_upcoming_matches(
     )
 
     return fixtures
+

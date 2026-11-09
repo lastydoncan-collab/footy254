@@ -279,6 +279,15 @@ def get_live_fixtures():
                     'HALF_TIME'
                 )
 
+                -- A stored status only changes when a sync reaches that
+                -- match. If the app was offline when it ended the row stays
+                -- IN_PLAY forever, so also require a plausible kickoff: a
+                -- match is never "live" more than ~4h after it started (90
+                -- min + half-time + stoppage + extra time + penalties).
+                AND kickoff IS NOT NULL
+                AND kickoff >= NOW() - INTERVAL '4 hours'
+                AND kickoff <= NOW() + INTERVAL '15 minutes'
+
                 ORDER BY kickoff ASC;
                 """
             )

@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
+import BetSlipDrawer from "../components/BetSlipDrawer";
 
 export default function DashboardLayout() {
   return (
@@ -14,6 +15,9 @@ export default function DashboardLayout() {
       <div className="pb-24 lg:pb-0">
         <Footer />
       </div>
+      {/* Mounted once here (not per-page) so a bet slip selection survives
+          navigating away from the Betting page. */}
+      <BetSlipDrawer />
     </div>
   );
 }

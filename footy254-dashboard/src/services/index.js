@@ -61,3 +61,9 @@ export * from "./subscriptions";
 // -------------------------
 
 export * from "./account";
+
+// -------------------------
+// Betting (PitchIQ module)
+// -------------------------
+
+export * from "./betting";

@@ -44,6 +44,7 @@ settings.validate_jwt_secret()
 
 from api.account import router as account_router  # noqa: E402
 from api.admin import router as admin_router  # noqa: E402
+from api.betting import router as betting_router  # noqa: E402
 from api.card_payments import router as card_router  # noqa: E402
 from api.fixtures import router as fixtures_router  # noqa: E402
 from api.mpesa import router as mpesa_router  # noqa: E402
@@ -70,6 +71,12 @@ APP_START_TIME = time()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from asyncio import get_running_loop
+
+    from services.odds_hub import odds_hub
+
+    odds_hub.bind_loop(get_running_loop())
+
     if settings.RUN_MIGRATIONS_ON_STARTUP:
         from database.migrate import apply_migrations
 
@@ -202,6 +209,7 @@ for router in (
     admin_router,
     fixtures_router,
     predictions_router,
+    betting_router,
     synchronization_router,
     subscriptions_router,
     card_router,

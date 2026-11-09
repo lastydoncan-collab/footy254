@@ -7,19 +7,19 @@ from decimal import Decimal
 SUBSCRIPTION_PLANS = {
     "MONTHLY": {
         "name": "Premium Monthly",
-        "price": Decimal("499.00"),
+        "price": Decimal("199.00"),
         "currency": "KES",
         "duration_days": 30,
     },
     "QUARTERLY": {
         "name": "Premium Quarterly",
-        "price": Decimal("1299.00"),
+        "price": Decimal("499.00"),
         "currency": "KES",
         "duration_days": 90,
     },
     "ANNUAL": {
         "name": "Premium Annual",
-        "price": Decimal("4499.00"),
+        "price": Decimal("1999.00"),
         "currency": "KES",
         "duration_days": 365,
     },

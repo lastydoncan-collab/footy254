@@ -1,9 +1,98 @@
-FOOTY254 full update (everything since your ufootb zip). Copy these folders/files over C:\Dev\ufootb
-(Replace). Your .venv, node_modules and .env are not in this zip, so they stay as they are.
+PitchIQ BETTING FRONTEND PATCH
+================================
+Builds on: betting_patch.zip + betting_scale_patch.zip (backend you already
+applied, now confirmed working - your Swagger test shows real, differentiated
+odds like 2.90/3.77/3.13, not the flat 1.05 from before).
 
-1. Stop the backend (Ctrl+C). With (.venv) active, from C:\Dev\ufootb:
-      python -m database.migrate          <- adds the new profile/2FA/card columns (safe to repeat)
-      python -m uvicorn main:app --reload
-2. Frontend: Ctrl+C, then "npm run dev". Open the address Vite prints, hard refresh (Ctrl+Shift+R).
-3. Optional .env additions (see .env.example): PAYSTACK_SECRET_KEY (card payments stay off while empty),
-   MPESA_PARTY_B (Till only). footy254-dashboard\.env: VITE_SUPPORT_EMAIL / PHONE / WHATSAPP.
+This patch adds the betting UI to footy254-dashboard: an odds board with
+live WebSocket updates, a persistent bet slip (single + multi), a wallet
+page, a jackpots page, and a bet history page - all styled to match your
+existing app (same Tailwind tokens, same card/button language, same
+Sidebar/Header/ProtectedRoute pattern).
+
+HOW TO APPLY
+------------
+1. Copy the footy254-dashboard/ folder from this zip into
+   C:\Dev\ufootb\footy254-dashboard\ , overwriting:
+     src/App.jsx
+     src/main.jsx
+     src/layouts/DashboardLayout.jsx
+     src/components/Sidebar.jsx
+     src/services/index.js
+   and adding the new files:
+     src/services/betting.js
+     src/services/oddsSocket.js
+     src/context/BetSlipContext.jsx
+     src/components/OddsFixtureCard.jsx
+     src/components/BetSlipDrawer.jsx
+     src/pages/Betting.jsx
+     src/pages/Wallet.jsx
+     src/pages/Jackpots.jsx
+     src/pages/BetHistory.jsx
+
+2. No new npm packages needed - everything uses what's already in your
+   package.json (react-router-dom, lucide-react).
+
+3. Restart the dashboard dev server (npm run dev) if it's running - Vite
+   usually hot-reloads, but a fresh route list is safer with a restart.
+
+4. Make sure your backend is running with the betting_scale_patch applied
+   (odds_hub.bind_loop must run at startup for /ws/odds to work - you
+   already have this from the earlier patch).
+
+WHAT YOU'LL SEE
+----------------
+- A new "Bet" tab in the sidebar / bottom nav, linking to /betting.
+- /betting - the odds board, grouped/filterable by competition, each
+  fixture showing 1/X/2 buttons with live odds. Tapping an odds button
+  adds it to the bet slip. Odds update live via /api/betting/ws/odds
+  without a page refresh (look for the "● Live" tag once a price tick
+  arrives).
+- A floating "Slip" button (bottom-right) opens the bet slip drawer from
+  any page in the dashboard - it's mounted once in DashboardLayout so a
+  selection survives navigating to another page. One selection per
+  fixture; picking a different outcome on the same match replaces it;
+  2+ legs automatically becomes a multi-bet with combined odds shown.
+- /betting/wallet - paper-money balance + transaction history (requires
+  login - wraps GET /betting/wallet and /betting/wallet/transactions).
+- /betting/jackpots - open jackpots with one-tap 1/X/2 picks per fixture
+  and a stake field (POST /betting/jackpots/{id}/enter).
+- /betting/history - every bet slip you've placed, with status badges
+  (PENDING/WON/LOST/VOID) and the legs inside each slip.
+
+ONE THING TO VERIFY
+--------------------
+The odds-board shape (match_id, home_odds, draw_odds, away_odds, margin,
+generated_at, home_team, away_team, competition, kickoff, fixture_status)
+is copied exactly from your live Swagger response, so that part is a sure
+match.
+
+The REQUEST bodies this patch sends for placing bets and entering jackpots
+were written from the schema design in the scale patch's documentation
+(PlaceSingleBetRequest / PlaceMultiBetRequest / JackpotEntryRequest), but
+I don't have a live Swagger capture of those specific request shapes in
+this session (the sandbox I'm working in never had your backend running).
+What this patch sends:
+
+  POST /api/betting/slips/single
+    { match_id, selection: "HOME"|"DRAW"|"AWAY", stake, idempotency_key }
+
+  POST /api/betting/slips/multi
+    { legs: [{ match_id, selection }], stake, idempotency_key }
+
+  POST /api/betting/jackpots/{id}/enter
+    { picks: [{ match_id, selection }], stake, idempotency_key }
+
+If placing a bet or entering a jackpot comes back with a 422 in the
+browser console, open http://127.0.0.1:8000/docs, expand that endpoint,
+and paste me its "Request body" schema - it's a one-line change in
+src/services/betting.js to match it exactly.
+
+WHY A BET SLIP LIVES IN REACT STATE, NOT A GLOBAL STORE
+---------------------------------------------------------
+BetSlipContext.jsx follows the same pattern as AuthContext.jsx already in
+your app - a React context + sessionStorage backup, no new dependency. It
+clears the stored slip after a bet is placed and keeps nothing across
+browser tabs (unlike auth, a bet slip shouldn't sync across tabs - placing
+from one tab shouldn't silently empty a slip someone is still building in
+another).

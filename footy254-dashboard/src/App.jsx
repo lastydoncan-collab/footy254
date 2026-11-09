@@ -29,6 +29,12 @@ import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import Security from "./pages/Security";
 
+// Betting (PitchIQ module)
+import Betting from "./pages/Betting";
+import Wallet from "./pages/Wallet";
+import Jackpots from "./pages/Jackpots";
+import BetHistory from "./pages/BetHistory";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -57,6 +63,27 @@ export default function App() {
                 path="/subscription/checkout/:planId"
                 element={<SubscriptionCheckout />}
             />
+
+          {/* Betting (PitchIQ module) - odds board & jackpots are public to
+              browse; wallet and bet history require a signed-in user. */}
+          <Route path="/betting" element={<Betting />} />
+          <Route path="/betting/jackpots" element={<Jackpots />} />
+          <Route
+            path="/betting/wallet"
+            element={
+              <ProtectedRoute>
+                <Wallet />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/betting/history"
+            element={
+              <ProtectedRoute>
+                <BetHistory />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Protected */}
           <Route

@@ -23,6 +23,19 @@ from database.automation_repository import (
     reset_finished_counter,
 )
 
+from database.betting_repository import (
+    close_expired_jackpots,
+    generate_odds_for_fixture,
+    get_fixtures_needing_odds,
+    get_fixtures_with_pending_settlement,
+    get_jackpots_ready_to_settle,
+    get_open_odds_match_ids,
+    settle_fixture_bets,
+    settle_jackpot_entries,
+    shade_odds_for_exposure,
+)
+from services.odds_hub import odds_hub
+
 RETRAIN_THRESHOLD = 10
 
 logger = logging.getLogger(__name__)
@@ -251,6 +264,103 @@ def reconcile_pending_payments_job():
         )
 
 
+def generate_missing_odds_job():
+    """Price every SCHEDULED/TIMED fixture that has a model prediction but
+    no odds yet — the "fixture-sync just brought in new matches" case."""
+
+    try:
+        match_ids = get_fixtures_needing_odds()
+
+        for match_id in match_ids:
+            try:
+                row = generate_odds_for_fixture(match_id)
+                if row:
+                    odds_hub.publish({"type": "odds_update", "reason": "NEW", **row})
+            except Exception:
+                logger.exception("Failed generating odds for fixture %s.", match_id)
+
+        if match_ids:
+            logger.info("Generated odds for %d new fixture(s).", len(match_ids))
+    except Exception:
+        logger.exception("generate_missing_odds_job failed.")
+
+
+def reshade_odds_job():
+    """
+    Re-price every fixture currently carrying odds against its latest
+    pending-stake exposure. This is what makes prices move live as bets
+    come in — the single-bet-placement path intentionally does NOT also
+    trigger a shade (that would mean every stake pays the DB/exposure-query
+    cost synchronously inside the user's request); instead this runs on a
+    short interval and pushes whatever changed to every connected client.
+    """
+
+    try:
+        match_ids = get_open_odds_match_ids()
+        moved = 0
+
+        for match_id in match_ids:
+            try:
+                row = shade_odds_for_exposure(match_id)
+                if row and row["source"] == "EXPOSURE_SHADE":
+                    moved += 1
+                if row:
+                    odds_hub.publish({"type": "odds_update", "reason": row["source"], **row})
+            except Exception:
+                logger.exception("Failed reshading odds for fixture %s.", match_id)
+
+        if moved:
+            logger.info("Exposure-shaded odds on %d fixture(s).", moved)
+    except Exception:
+        logger.exception("reshade_odds_job failed.")
+
+
+def settle_finished_fixtures_job():
+    """Resolve bet slips for any fixture that finished since the last tick."""
+
+    try:
+        match_ids = get_fixtures_with_pending_settlement()
+
+        for match_id in match_ids:
+            try:
+                result = settle_fixture_bets(match_id)
+                logger.info("Auto-settled fixture %s: %s", match_id, result)
+            except Exception:
+                logger.exception("Failed settling fixture %s.", match_id)
+    except Exception:
+        logger.exception("settle_finished_fixtures_job failed.")
+
+
+def settle_jackpots_job():
+    """Resolve any jackpot whose fixtures have all finished."""
+
+    try:
+        jackpot_ids = get_jackpots_ready_to_settle()
+
+        for jackpot_id in jackpot_ids:
+            try:
+                result = settle_jackpot_entries(jackpot_id)
+                logger.info("Auto-settled jackpot %s: %s", jackpot_id, result)
+            except Exception:
+                logger.exception("Failed settling jackpot %s.", jackpot_id)
+    except Exception:
+        logger.exception("settle_jackpots_job failed.")
+
+
+def close_expired_jackpots_job():
+    """Stop listing a jackpot as OPEN once its closes_at has passed or one
+    of its fixtures has kicked off. place_jackpot_entry() already refuses
+    a late entry on its own; this just keeps the public jackpot list
+    honest in the meantime."""
+
+    try:
+        closed = close_expired_jackpots()
+        if closed:
+            logger.info("Closed %d expired jackpot(s): %s", len(closed), closed)
+    except Exception:
+        logger.exception("close_expired_jackpots_job failed.")
+
+
 def purge_auth_data_job():
     """Delete long-dead refresh/reset tokens and stale login-attempt rows."""
 
@@ -301,6 +411,47 @@ def start_scheduler():
         id="purge_auth_data",
         replace_existing=True,
         next_run_time=datetime.now() + timedelta(minutes=2),
+    )
+
+    scheduler.add_job(
+        exclusive("generate_missing_odds")(generate_missing_odds_job),
+        "interval",
+        minutes=2,
+        id="generate_missing_odds",
+        replace_existing=True,
+        next_run_time=datetime.now() + timedelta(seconds=20),
+    )
+
+    scheduler.add_job(
+        exclusive("reshade_odds")(reshade_odds_job),
+        "interval",
+        seconds=20,
+        id="reshade_odds",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        exclusive("settle_finished_fixtures")(settle_finished_fixtures_job),
+        "interval",
+        minutes=1,
+        id="settle_finished_fixtures",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        exclusive("settle_jackpots")(settle_jackpots_job),
+        "interval",
+        minutes=2,
+        id="settle_jackpots",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        exclusive("close_expired_jackpots")(close_expired_jackpots_job),
+        "interval",
+        minutes=1,
+        id="close_expired_jackpots",
+        replace_existing=True,
     )
 
     scheduler.start()
