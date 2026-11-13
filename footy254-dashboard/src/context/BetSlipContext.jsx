@@ -6,7 +6,13 @@
 // place the bet. Purely client-side state (nothing hits the backend until
 // "Place bet") - mirrors how AuthContext holds session state.
 //
-// A leg is: { matchId, selection, homeTeam, awayTeam, competition, odds }
+// A leg is:
+//   { matchId, market, selection, homeTeam, awayTeam, competition, odds }
+// market is one of "1X2" | "BTTS" | "OU_2_5" (see database/betting_markets.py
+// on the backend for the full market/selection contract). A slip can only
+// hold one leg per fixture - picking a different market or outcome on a
+// fixture already in the slip replaces that leg rather than adding a
+// second one, same rule as before multi-market support.
 
 import { createContext, useContext, useMemo, useState } from "react";
 import { placeSingleBet, placeMultiBet } from "../services/betting";
@@ -46,16 +52,24 @@ export function BetSlipProvider({ children }) {
     setLegs((prev) => {
       const withoutSameMatch = prev.filter((l) => l.matchId !== leg.matchId);
       const already = prev.find(
-        (l) => l.matchId === leg.matchId && l.selection === leg.selection
+        (l) =>
+          l.matchId === leg.matchId &&
+          l.market === leg.market &&
+          l.selection === leg.selection
       );
       // Clicking the same selection again removes it (toggle); clicking a
-      // different outcome on a match already in the slip replaces that leg -
-      // a slip can only hold one outcome per fixture.
+      // different outcome - or a different market - on a match already in
+      // the slip replaces that leg, since a slip can only hold one pick
+      // per fixture.
       const next = already ? withoutSameMatch : [...withoutSameMatch, leg];
       persist(next);
       return next;
     });
-    setOpen(true);
+    // Deliberately NOT opening the slip drawer here. Tapping one pick used
+    // to jump straight into the drawer, which made it impossible to select
+    // several fixtures before reviewing the slip. Picks now just accumulate
+    // quietly; the floating "Slip" button (which shows a live count) is how
+    // the user opens it when they're ready.
   }
 
   function removeLeg(matchId) {
@@ -73,8 +87,10 @@ export function BetSlipProvider({ children }) {
     setError("");
   }
 
-  const isSelected = (matchId, selection) =>
-    legs.some((l) => l.matchId === matchId && l.selection === selection);
+  const isSelected = (matchId, market, selection) =>
+    legs.some(
+      (l) => l.matchId === matchId && l.market === market && l.selection === selection
+    );
 
   const combinedOdds = useMemo(
     () => legs.reduce((acc, l) => acc * (Number(l.odds) || 1), 1),
@@ -103,12 +119,17 @@ export function BetSlipProvider({ children }) {
       if (legs.length === 1) {
         slip = await placeSingleBet({
           matchId: legs[0].matchId,
+          market: legs[0].market,
           selection: legs[0].selection,
           stake: s,
         });
       } else {
         slip = await placeMultiBet({
-          legs: legs.map((l) => ({ matchId: l.matchId, selection: l.selection })),
+          legs: legs.map((l) => ({
+            matchId: l.matchId,
+            market: l.market,
+            selection: l.selection,
+          })),
           stake: s,
         });
       }
