@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Trophy } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { getActiveJackpots, enterJackpot } from "../services/betting";
+import BackButton from "../components/BackButton";
 
 function JackpotCard({ jackpot, onEnter, entering }) {
   const { authenticated } = useAuth();
@@ -149,6 +150,7 @@ export default function Jackpots() {
 
   return (
     <div className="space-y-5">
+      <BackButton />
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-black">Jackpots</h1>
