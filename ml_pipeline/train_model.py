@@ -5,6 +5,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
@@ -149,9 +150,6 @@ REQUIRED_COLUMNS = [
     "home_recent_corners",
     "away_recent_corners",
 
-    "home_recent_cards",
-    "away_recent_cards",
-
     "home_recent_goals",
     "away_recent_goals",
 
@@ -194,8 +192,6 @@ REQUIRED_COLUMNS = [
     "sot_difference",
     "possession_difference",
     "corners_difference",
-    "cards_difference",
-    "home_advantage",
 
     "result",
 ]
@@ -237,6 +233,96 @@ def validate_dataset(df):
         "Dataset validation successful."
 
     )
+
+# ==========================================================
+# CHRONOLOGICAL ORDER + RECENCY WEIGHTS
+# ==========================================================
+
+# Half-life for recency weighting: a match this many days old carries half
+# the training weight of today's match, decaying exponentially from there.
+# ~2 seasons feels right for football — old enough to still value a deep
+# history, recent enough that this year's form actually outweighs 2016.
+RECENCY_HALF_LIFE_DAYS = 730
+
+
+def sort_chronologically(df):
+    """
+    Sort the dataset oldest-to-newest by match_date and reset the index.
+
+    build_elo() walks the dataframe sequentially to update ratings match by
+    match, so it has always silently depended on chronological row order
+    (previously guaranteed only implicitly, by dataset_builder.py writing
+    rows in the order its SQL query returned them). Sorting explicitly here
+    makes that guarantee self-evident, and is also what the time-based
+    train/test split below depends on.
+
+    Falls back to the dataset's existing row order (with a warning) if this
+    is a dataset built before "match_date" was added as a column — train()
+    still works, it just can't do a time-based split or recency weighting
+    until the dataset is rebuilt.
+    """
+
+    if "match_date" not in df.columns:
+
+        logger.warning(
+            "Dataset has no 'match_date' column (built with an older "
+            "dataset_builder.py) — skipping chronological sort. Re-run "
+            "build_dataset() to enable the time-based train/test split and "
+            "recency weighting."
+        )
+
+        return df, False
+
+    df = df.copy()
+
+    df["match_date"] = pd.to_datetime(
+        df["match_date"],
+        errors="coerce",
+        utc=True,
+    )
+
+    unparsed = int(df["match_date"].isna().sum())
+
+    if unparsed:
+        logger.warning(
+            "%d row(s) have an unparsable match_date; they sort first "
+            "(oldest) and get the lowest recency weight.",
+            unparsed,
+        )
+
+    df = df.sort_values(
+        "match_date",
+        na_position="first",
+    ).reset_index(drop=True)
+
+    return df, True
+
+
+def compute_recency_weights(df, has_dates, half_life_days=RECENCY_HALF_LIFE_DAYS):
+    """
+    Exponential-decay sample weight: 1.0 for the most recent match in the
+    dataset, 0.5 at `half_life_days` old, 0.25 at twice that, and so on.
+
+    Replaces the previous behaviour of weighting every historical row
+    identically regardless of age — a 2014 match and a 2026 match used to
+    count exactly the same toward the model's decision boundaries, which
+    actively fights against learning current team strength.
+    """
+
+    if not has_dates:
+        return np.ones(len(df))
+
+    most_recent = df["match_date"].max()
+
+    age_days = (
+        (most_recent - df["match_date"]).dt.total_seconds() / 86400.0
+    )
+
+    weights = np.power(0.5, age_days / half_life_days)
+
+    weights = np.nan_to_num(weights, nan=float(np.nanmedian(weights)) if np.isfinite(np.nanmedian(weights)) else 1.0)
+
+    return weights
 
 # ==========================================================
 # TEAM ENCODER
@@ -495,10 +581,6 @@ def build_team_stats(df):
             "recent_corners": round(float(mean_feature(
                 "home_recent_corners",
                 "away_recent_corners")), 4),
-
-            "recent_cards": round(float(mean_feature(
-                "home_recent_cards",
-                "away_recent_cards")), 4),
         }
 
     joblib.dump(
@@ -583,6 +665,8 @@ def prepare_features(df, encoder, elo):
         "home_goals",
         "away_goals",
         "result",
+        "match_date",
+        "sample_weight",
     }
 
     FEATURE_COLUMNS = [
@@ -661,25 +745,58 @@ def prepare_features(df, encoder, elo):
 # TRAIN MODEL
 # ==========================================================
 
-def train_model(X, y):
+def train_model(X, y, sample_weight, has_dates):
 
     logger.info(
         "Splitting training dataset..."
     )
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    if has_dates:
 
-        X,
+        # Time-based holdout: the oldest 80% of matches train the model,
+        # the most recent 20% test it. X/y/sample_weight all arrive in
+        # chronological order (sort_chronologically() upstream), so this is
+        # a positional split, not a random one. This is the honest way to
+        # evaluate a football model — a random split lets the model see
+        # match N+50's data patterns bleed into predicting match N (same
+        # teams, overlapping seasons, shared rolling-form windows), which
+        # is almost certainly why the previous random split scored higher
+        # than this model will actually perform in production, predicting
+        # fixtures it has never seen *or trained near in time*.
+        logger.info(
+            "Using a chronological (time-based) train/test split."
+        )
 
-        y,
+        split_index = int(len(X) * 0.80)
 
-        test_size=0.20,
+        X_train, X_test = X[:split_index], X[split_index:]
+        y_train, y_test = y[:split_index], y[split_index:]
+        w_train, w_test = (
+            sample_weight[:split_index],
+            sample_weight[split_index:],
+        )
 
-        random_state=42,
+    else:
 
-        stratify=y,
+        # No match_date available (dataset built before this upgrade) —
+        # fall back to the original random stratified split rather than
+        # failing outright.
+        logger.info(
+            "Using a random stratified train/test split (no match_date)."
+        )
 
-    )
+        (
+            X_train, X_test,
+            y_train, y_test,
+            w_train, w_test,
+        ) = train_test_split(
+            X,
+            y,
+            sample_weight,
+            test_size=0.20,
+            random_state=42,
+            stratify=y,
+        )
 
     logger.info(
 
@@ -698,10 +815,10 @@ def train_model(X, y):
     )
 
     logger.info(
-        "Training Random Forest..."
+        "Training calibrated Random Forest..."
     )
 
-    model = RandomForestClassifier(
+    base_model = RandomForestClassifier(
 
         n_estimators=600,
 
@@ -722,7 +839,7 @@ def train_model(X, y):
     )
 
     cv_scores = cross_val_score(
-        model,
+        base_model,
         X_train,
         y_train,
         cv=5,
@@ -731,14 +848,32 @@ def train_model(X, y):
     )
 
     logger.info(
-        "Cross-validation accuracy: %.4f ± %.4f",
+        "Cross-validation accuracy (uncalibrated base estimator): %.4f ± %.4f",
         cv_scores.mean(),
         cv_scores.std(),
+    )
+
+    # Wrap the Random Forest in isotonic probability calibration. A raw
+    # RandomForestClassifier's predict_proba() output is NOT a calibrated
+    # probability — it is a vote fraction across trees, and tree ensembles
+    # are well known to be overconfident near 0/1 and underconfident near
+    # the middle, which for a 3-class problem is exactly where draws live.
+    # CalibratedClassifierCV refits the base estimator across `cv` internal
+    # folds and learns a monotonic remapping from raw scores to empirically
+    # correct probabilities per class, replacing the previous approach of a
+    # single hardcoded softmax "temperature" constant (1.40) that could not
+    # know whether the model was over- or under-confident for any one
+    # class — least of all draws specifically.
+    model = CalibratedClassifierCV(
+        base_model,
+        method="isotonic",
+        cv=5,
     )
 
     model.fit(
         X_train,
         y_train,
+        sample_weight=w_train,
     )
 
     logger.info(
@@ -759,9 +894,45 @@ def train_model(X, y):
 
     logger.info(
 
-        "Accuracy : %.4f",
-
+        "Accuracy (%s split) : %.4f",
+        "time-based" if has_dates else "random",
         accuracy,
+
+    )
+
+    report_text = classification_report(
+
+        y_test,
+
+        predictions,
+
+        target_names=[
+
+            "HOME",
+
+            "DRAW",
+
+            "AWAY",
+
+        ],
+
+        digits=4,
+
+    )
+
+    report_dict = classification_report(
+        y_test,
+        predictions,
+        target_names=["HOME", "DRAW", "AWAY"],
+        digits=4,
+        output_dict=True,
+    )
+
+    matrix = confusion_matrix(
+
+        y_test,
+
+        predictions,
 
     )
 
@@ -773,29 +944,7 @@ def train_model(X, y):
 
     print("=" * 70)
 
-    print(
-
-        classification_report(
-
-            y_test,
-
-            predictions,
-
-            target_names=[
-
-                "HOME",
-
-                "DRAW",
-
-                "AWAY",
-
-            ],
-
-            digits=4,
-
-        )
-
-    )
+    print(report_text)
 
     print()
 
@@ -805,17 +954,7 @@ def train_model(X, y):
 
     print("=" * 70)
 
-    print(
-
-        confusion_matrix(
-
-            y_test,
-
-            predictions,
-
-        )
-
-    )
+    print(matrix)
 
     print()
 
@@ -831,11 +970,62 @@ def train_model(X, y):
 
         probabilities,
 
+        report_dict,
+
+        matrix,
+
     )
 
 # ==========================================================
 # FEATURE IMPORTANCE
 # ==========================================================
+
+def extract_feature_importances(model, n_features):
+    """
+    CalibratedClassifierCV has no .feature_importances_ of its own (it isn't
+    a tree model) — it holds one fitted copy of the base RandomForest per
+    internal CV fold, in .calibrated_classifiers_. Average their individual
+    .feature_importances_ for a single importance ranking, same shape and
+    meaning as before this change, just sourced from the calibrated model's
+    internal folds instead of one plain RandomForestClassifier.
+    """
+
+    if hasattr(model, "feature_importances_"):
+        # Backward-compatible path, in case an uncalibrated model is ever
+        # passed in here directly (e.g. for debugging).
+        return np.asarray(model.feature_importances_)
+
+    totals = np.zeros(n_features)
+    count = 0
+
+    for calibrated_classifier in getattr(model, "calibrated_classifiers_", []):
+
+        # Attribute was renamed base_estimator -> estimator in scikit-learn
+        # 1.4; support both so this keeps working across the version range
+        # requirements-backend.txt pins (1.8.x as of this writing).
+        estimator = getattr(
+            calibrated_classifier,
+            "estimator",
+            None,
+        ) or getattr(
+            calibrated_classifier,
+            "base_estimator",
+            None,
+        )
+
+        if estimator is not None and hasattr(estimator, "feature_importances_"):
+            totals += estimator.feature_importances_
+            count += 1
+
+    if count == 0:
+        logger.warning(
+            "Could not extract feature importances from the calibrated "
+            "model; feature_importance.csv will be all zeros."
+        )
+        return totals
+
+    return totals / count
+
 
 def print_feature_importance(
 
@@ -851,7 +1041,7 @@ def print_feature_importance(
 
             "Feature": feature_columns,
 
-            "Importance": model.feature_importances_,
+            "Importance": extract_feature_importances(model, len(feature_columns)),
 
         }
 
@@ -957,18 +1147,63 @@ def save_metadata(
 
     features,
 
+    report_dict=None,
+
+    confusion=None,
+
+    has_dates=False,
+
 ):
 
     metadata = {
         "accuracy": float(accuracy),
         "rows": int(rows),
         "features": int(features),
-        "model": "RandomForestClassifier",
-        "version": "FOOTY254 V3",
+        "model": "RandomForestClassifier + CalibratedClassifierCV(isotonic)",
+        "version": "FOOTY254 V4",
         "n_estimators": 600,
         "max_depth": 16,
         "rolling_matches": 5,
+        "split": "time-based (80/20, chronological)" if has_dates else "random stratified (80/20)",
+        "recency_weighting": bool(has_dates),
+        "recency_half_life_days": RECENCY_HALF_LIFE_DAYS if has_dates else None,
     }
+
+    # Persist per-class precision/recall/F1 (previously only printed to
+    # stdout at training time and lost on the next retrain) so draw
+    # performance specifically — historically the weak point for 1X2
+    # classifiers — is trackable across retrains instead of only visible in
+    # a log line that scrolls away.
+    if report_dict:
+
+        metadata["per_class"] = {
+
+            label: {
+
+                "precision": round(float(report_dict[label]["precision"]), 4),
+                "recall": round(float(report_dict[label]["recall"]), 4),
+                "f1_score": round(float(report_dict[label]["f1-score"]), 4),
+                "support": int(report_dict[label]["support"]),
+
+            }
+
+            for label in ("HOME", "DRAW", "AWAY")
+
+            if label in report_dict
+
+        }
+
+        metadata["draw_recall"] = metadata["per_class"].get(
+            "DRAW", {}
+        ).get("recall")
+
+        metadata["macro_f1"] = round(
+            float(report_dict["macro avg"]["f1-score"]), 4
+        ) if "macro avg" in report_dict else None
+
+    if confusion is not None:
+        metadata["confusion_matrix"] = confusion.tolist()
+        metadata["confusion_matrix_labels"] = ["HOME", "DRAW", "AWAY"]
 
     joblib.dump(
 
@@ -1014,6 +1249,14 @@ def train():
     )
 
     # ------------------------------------------------------
+    # CHRONOLOGICAL ORDER + RECENCY WEIGHTS
+    # ------------------------------------------------------
+
+    df, has_dates = sort_chronologically(df)
+
+    sample_weight = compute_recency_weights(df, has_dates)
+
+    # ------------------------------------------------------
     # TEAM ENCODER
     # ------------------------------------------------------
 
@@ -1049,11 +1292,15 @@ def train():
     # TRAIN MODEL
     # ------------------------------------------------------
 
-    model, accuracy, _ = train_model(
+    model, accuracy, _, report_dict, confusion = train_model(
 
         X,
 
         y,
+
+        sample_weight,
+
+        has_dates,
 
     )
 
@@ -1092,6 +1339,12 @@ def train():
         len(df),
 
         len(feature_columns),
+
+        report_dict=report_dict,
+
+        confusion=confusion,
+
+        has_dates=has_dates,
 
     )
 

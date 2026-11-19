@@ -3,12 +3,36 @@ import joblib
 import numpy as np
 import os
 
+from ml_pipeline.core.poisson_engine import PoissonEngine
 from ml_pipeline.train_model import MODELS_DIR
 
 logger = logging.getLogger(__name__)
 
 
 class PredictionEngine:
+
+    # Blend weight for the Random Forest's 1X2 probabilities vs. the
+    # Poisson goal-model's 1X2 probabilities (see predict()). The two
+    # models make different kinds of mistakes: the classifier learns
+    # patterns across ~70 form/strength features but has no notion that
+    # goals are a counting process, while Poisson only sees two expected-
+    # goals numbers but gets the *shape* of football scoring right (draws
+    # emerge naturally from two low-scoring Poisson processes landing on
+    # the same count, rather than needing the classifier to learn that
+    # pattern from class-balanced resampling alone). Averaging independent,
+    # differently-wrong models is one of the most reliable gains in
+    # practice; 65/35 keeps the classifier (which has access to far more
+    # signal) as the dominant voice while letting Poisson pull outcomes
+    # back toward realistic scorelines.
+    ML_BLEND_WEIGHT = 0.65
+    POISSON_BLEND_WEIGHT = 0.35
+
+    # Floor/ceiling so a team with little or no history (new to the
+    # dataset, or every match extremely slow and used fallback defaults)
+    # can't send expected goals to 0 (Poisson breaks down at exactly 0)
+    # or to an unrealistic extreme.
+    MIN_XG = 0.35
+    MAX_XG = 4.5
 
     def __init__(
         self,
@@ -24,6 +48,7 @@ class PredictionEngine:
         self.encoder = encoder
         self.elo = elo
         self.team_stats = team_stats
+        self.poisson = PoissonEngine()
 
     # =====================================================
     # FEATURE COLUMNS (cached; reloaded if retraining rewrites the file)
@@ -563,12 +588,6 @@ class PredictionEngine:
         )
 
         # -------------------------------------------------
-        # Home Advantage
-        # -------------------------------------------------
-
-        home_advantage = 1.0
-
-        # -------------------------------------------------
         # Additional streaks / recent metrics
         # Provide relative values (home - away) to match other features
         # and avoid undefined variable errors when building feature dict.
@@ -664,19 +683,6 @@ class PredictionEngine:
             away_recent_corners
         )
 
-        home_recent_cards = self.team_value(
-            home_team,
-            "recent_cards",
-        )
-        away_recent_cards = self.team_value(
-            away_team,
-            "recent_cards",
-        )
-        recent_cards = (
-            home_recent_cards -
-            away_recent_cards
-        )
-
         home_momentum = self.team_value(home_team, "momentum")
         away_momentum = self.team_value(away_team, "momentum")
 
@@ -700,10 +706,6 @@ class PredictionEngine:
         corners_difference = (
             home_recent_corners -
             away_recent_corners
-        )
-        cards_difference = (
-            home_recent_cards -
-            away_recent_cards
         )
         momentum_difference = momentum
 
@@ -746,8 +748,6 @@ class PredictionEngine:
             "away_recent_possession": away_recent_possession,
             "home_recent_corners": home_recent_corners,
             "away_recent_corners": away_recent_corners,
-            "home_recent_cards": home_recent_cards,
-            "away_recent_cards": away_recent_cards,
             "home_recent_goals": home_recent_goals,
             "away_recent_goals": away_recent_goals,
             "home_recent_conceded": home_recent_conceded,
@@ -780,8 +780,6 @@ class PredictionEngine:
             "sot_difference": sot_difference,
             "possession_difference": possession_difference,
             "corners_difference": corners_difference,
-            "cards_difference": cards_difference,
-            "home_advantage": home_advantage,
 
             # Team identity + Elo (train_model.prepare_features adds these)
             "home_recent_goal_difference": home_recent_goal_difference,
@@ -860,7 +858,20 @@ class PredictionEngine:
             class_probs.get(2, 0.0),
         ]
 
-        probabilities = self.softmax_smooth(probabilities)
+        # softmax_smooth() (fixed temperature=1.40) is no longer applied
+        # here now that train_model.py wraps the classifier in
+        # CalibratedClassifierCV: that fits an actual empirical remapping
+        # of raw scores to correct probabilities per class, learned from
+        # held-out folds, which is strictly more accurate than one
+        # hand-picked constant applied identically to every prediction
+        # regardless of which class or how confident the raw score was.
+        # Stacking the old fixed smoothing on top would just blur a
+        # calibration that's already been fit properly. If a model trained
+        # before this change (a plain, uncalibrated RandomForestClassifier)
+        # is still deployed, predict_proba() output here will be a bit more
+        # overconfident than ideal until the next retrain — not incorrect,
+        # just the same behaviour the app always had before calibration
+        # existed at all.
 
         return {
             "home_win": float(probabilities[0]),
@@ -882,30 +893,80 @@ class PredictionEngine:
         return round(highest * 100, 2)
 
     # =====================================================
-    # ESTIMATED XG
+    # EXPECTED GOALS (real, team-stat-based — not derived from 1X2 probs)
     # =====================================================
 
-    def estimate_xg(
+    def compute_expected_goals(
         self,
-        probabilities,
+        home_team,
+        away_team,
     ):
+        """
+        Expected goals from each team's own attacking/conceding xG history,
+        not backed out algebraically from the 1X2 win/draw/loss probabilities.
 
-        home = (
-            0.8
-            + probabilities["home_win"] * 1.8
-            + probabilities["draw"] * 0.2
+        The previous implementation (estimate_xg) computed "xg" as a linear
+        function of home_win/draw/away_win probability — i.e. it manufactured
+        an xG-shaped number FROM the match-result prediction, rather than
+        measuring anything about how either team actually scores or concedes.
+        That meant xg could never disagree with the 1X2 call (a fixture
+        the model called 70% HOME always got a inflated home xg, regardless
+        of whether that team actually scores goals), and it gave
+        PoissonEngine nothing real to work with.
+
+        This instead averages each side's own attacking output against the
+        opponent's own defensive leakage (recent_xg/recent_xga, already
+        tracked per team), the standard two-sided approach to expected
+        goals, with a small home-advantage multiplier.
+        """
+
+        home_attack = self.team_value(home_team, "recent_xg", default=1.2)
+        home_defence = self.team_value(home_team, "recent_xga", default=1.2)
+
+        away_attack = self.team_value(away_team, "recent_xg", default=1.2)
+        away_defence = self.team_value(away_team, "recent_xga", default=1.2)
+
+        HOME_ADVANTAGE_MULTIPLIER = 1.10
+
+        home_xg = (
+            (home_attack + away_defence) / 2.0
+        ) * HOME_ADVANTAGE_MULTIPLIER
+
+        away_xg = (
+            (away_attack + home_defence) / 2.0
         )
 
-        away = (
-            0.8
-            + probabilities["away_win"] * 1.8
-            + probabilities["draw"] * 0.2
-        )
+        home_xg = min(max(home_xg, self.MIN_XG), self.MAX_XG)
+        away_xg = min(max(away_xg, self.MIN_XG), self.MAX_XG)
 
         return {
-            "home": round(home, 2),
-            "away": round(away, 2),
+            "home": round(home_xg, 2),
+            "away": round(away_xg, 2),
         }
+
+    # =====================================================
+    # POISSON GOAL MODEL
+    # =====================================================
+
+    def predict_poisson(
+        self,
+        home_team,
+        away_team,
+        xg=None,
+    ):
+        """
+        Run the (previously unused) PoissonEngine off real expected-goals
+        inputs. Returns its full breakdown — 1X2 probabilities, most likely
+        score, top scorelines, BTTS, over/under, clean sheets — all derived
+        from the same score matrix, so they're internally consistent with
+        each other (unlike the old xg heuristic, which had no relationship
+        to anything else the engine reported).
+        """
+
+        if xg is None:
+            xg = self.compute_expected_goals(home_team, away_team)
+
+        return self.poisson.predict(xg["home"], xg["away"])
 
     # =====================================================
     # PUBLIC API
@@ -917,14 +978,48 @@ class PredictionEngine:
         away_team,
     ):
 
-        probabilities = self.predict_ml(
+        ml_probabilities = self.predict_ml(
             home_team,
             away_team,
         )
 
+        xg = self.compute_expected_goals(
+            home_team,
+            away_team,
+        )
+
+        poisson_result = self.predict_poisson(
+            home_team,
+            away_team,
+            xg=xg,
+        )
+
+        # Poisson's match_probabilities() already returns fractions summing
+        # to 1.0 (see poisson_engine.py); the classifier's predict_ml() does
+        # too. Blend the two independent signals (see ML_BLEND_WEIGHT's
+        # comment above) and renormalize defensively in case either side's
+        # rounding left the sum fractionally off 1.0.
+        poisson_probabilities = poisson_result["probabilities"]
+
+        blended = {
+            outcome: (
+                ml_probabilities[outcome] * self.ML_BLEND_WEIGHT
+                + poisson_probabilities[outcome] * self.POISSON_BLEND_WEIGHT
+            )
+            for outcome in ("home_win", "draw", "away_win")
+        }
+
+        total = sum(blended.values())
+
+        if total > 0:
+            blended = {
+                outcome: value / total
+                for outcome, value in blended.items()
+            }
+
         prediction_key = max(
-            probabilities,
-            key=probabilities.get,
+            blended,
+            key=blended.get,
         )
 
         prediction_map = {
@@ -934,11 +1029,7 @@ class PredictionEngine:
         }
 
         confidence = self.calculate_confidence(
-            probabilities
-        )
-
-        xg = self.estimate_xg(
-            probabilities
+            blended
         )
 
         return {
@@ -947,13 +1038,30 @@ class PredictionEngine:
             "prediction": prediction_map[prediction_key],
             "confidence": confidence,
             "probabilities": {
-                "home_win": round(probabilities["home_win"] * 100, 2),
-                "draw": round(probabilities["draw"] * 100, 2),
-                "away_win": round(probabilities["away_win"] * 100, 2),
+                "home_win": round(blended["home_win"] * 100, 2),
+                "draw": round(blended["draw"] * 100, 2),
+                "away_win": round(blended["away_win"] * 100, 2),
             },
             "xg": {
                 "home": round(xg["home"], 2),
                 "away": round(xg["away"], 2),
+            },
+            # Extra detail beyond the existing DB/API contract (prediction,
+            # confidence, probabilities, xg) — not persisted by
+            # save_prediction() today, but available here for any future
+            # goal-market use (BTTS/over-under/correct score) without
+            # needing to re-run Poisson separately, and useful for
+            # debugging/inspecting how the two models disagreed.
+            "model_breakdown": {
+                "ml_probabilities": {
+                    k: round(v * 100, 2) for k, v in ml_probabilities.items()
+                },
+                "poisson_probabilities": {
+                    k: round(v * 100, 2) for k, v in poisson_probabilities.items()
+                },
+                "most_likely_score": poisson_result["most_likely_score"],
+                "btts": poisson_result["btts"],
+                "over_2_5": poisson_result["over_2_5"],
             },
         }
 

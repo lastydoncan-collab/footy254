@@ -125,11 +125,13 @@ class TeamHistory:
         default_factory=lambda: deque(maxlen=ROLLING_MATCHES)
     )
 
-    # Cards
-
-    recent_cards: deque = field(
-        default_factory=lambda: deque(maxlen=ROLLING_MATCHES)
-    )
+    # NOTE: a "recent_cards" field used to live here. It was dropped because
+    # update_team_history() never had a real card count to work with (no
+    # provider field for it), so it was always written as the constant 2.0 for
+    # every team on every match — a feature with zero information content
+    # that only added noise (feature_importance.csv showed it at ~0.00001,
+    # effectively zero). If a real cards-per-match number becomes available
+    # from the data provider, re-add it as a genuine feature then.
 
 
 team_history = defaultdict(TeamHistory)
@@ -416,9 +418,6 @@ def team_features(team: str) -> dict:
         "recent_corners":
             safe_average(history.recent_corners),
 
-        "recent_cards":
-            safe_average(history.recent_cards),
-
         "momentum": history.momentum,
 
     }
@@ -588,9 +587,6 @@ def update_team_history(
         estimated_corners
     )
 
-    estimated_cards = 2.0
-    history.recent_cards.append(estimated_cards)
-
     # -------------------------------------------------
     # Rest Days
     # -------------------------------------------------
@@ -703,11 +699,6 @@ def create_training_features(
             home_stats["recent_corners"],
         "away_recent_corners":
             away_stats["recent_corners"],
-
-        "home_recent_cards":
-            home_stats["recent_cards"],
-        "away_recent_cards":
-            away_stats["recent_cards"],
 
         # -------------------------------------------------
         # Recent Goals
@@ -857,13 +848,12 @@ def create_training_features(
             home_stats["recent_corners"] -
             away_stats["recent_corners"],
 
-        "cards_difference":
-            home_stats["recent_cards"] -
-            away_stats["recent_cards"],
-
-        # -------------------------------------------------
-
-        "home_advantage":
-            1.0,
+        # NOTE: a "home_advantage" feature used to live here as the hardcoded
+        # constant 1.0 on every single row. A column with the same value on
+        # every row carries zero information for a tree-based model (split
+        # gain is always 0), confirmed by feature_importance.csv showing it
+        # at exactly 0.0. Home advantage is already captured properly via
+        # home_form/home_win_rate/home_strength etc., which actually vary
+        # per team. Dropped rather than kept as dead weight.
 
     }

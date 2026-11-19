@@ -174,6 +174,11 @@ def create_training_row(match) -> dict:
         "stage": match.stage,
         "home_team": match.home_team,
         "away_team": match.away_team,
+        # Carried through (not a model feature) so train_model.py can do a
+        # chronological train/test split and recency-weight older matches,
+        # instead of a random split that lets "future" matches leak into
+        # training relative to the test set.
+        "match_date": match.match_date,
     }
 
     row.update(
