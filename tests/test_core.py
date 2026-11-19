@@ -163,8 +163,14 @@ class PredictionEngine(unittest.TestCase):
     def test_features_match_trained_columns(self):
         import joblib
 
+        # 75 -> 71: home_advantage (always the constant 1.0, zero signal)
+        # and home_recent_cards/away_recent_cards/cards_difference (always
+        # ~2.0, fabricated, zero signal) were dropped from feature_builder.py
+        # and train_model.py's REQUIRED_COLUMNS. Update this count again if
+        # the feature set changes going forward — it exists specifically to
+        # catch exactly that kind of drift between training and prediction.
         cols = joblib.load(ROOT / "ml_pipeline" / "models" / "feature_columns.pkl")
-        self.assertEqual(len(cols), 75)
+        self.assertEqual(len(cols), 71)
 
     def test_prediction_is_valid_distribution(self):
         result = self.engine.predict(self.teams[0], self.teams[1])
