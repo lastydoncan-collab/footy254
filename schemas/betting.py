@@ -135,6 +135,47 @@ class WalletTransactionListResponse(BaseModel):
 
 
 # ==========================================================
+# WALLET — M-PESA DEPOSIT / WITHDRAWAL
+# ==========================================================
+
+class MpesaDepositRequest(BaseModel):
+
+    phone: str
+    # Minimum (KES 10) is enforced in api/betting.py against
+    # config.betting_finance.MIN_DEPOSIT_KES, not here — that constant is
+    # also needed outside this schema (the withdrawal tax math, and the
+    # frontend's own display of the minimum), so one place owns the number.
+    amount: Decimal = Field(gt=0)
+
+
+class MpesaWithdrawRequest(BaseModel):
+
+    phone: str
+    amount: Decimal = Field(gt=0)
+
+
+class MpesaRequestResponse(BaseModel):
+    """Returned right after an STK push / B2C payout is sent — this is the
+    PENDING state, not the final outcome (that arrives via M-Pesa's own
+    callback and is only reflected here on the next status poll)."""
+
+    id: int
+    direction: Literal["DEPOSIT", "WITHDRAWAL"]
+    status: Literal["PENDING", "COMPLETED", "FAILED"]
+    phone: str
+    gross_amount: Decimal
+    tax_amount: Decimal
+    net_amount: Decimal
+    checkout_request_id: Optional[str] = None
+    mpesa_receipt: Optional[str] = None
+    failure_reason: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==========================================================
 # JACKPOTS
 # ==========================================================
 
