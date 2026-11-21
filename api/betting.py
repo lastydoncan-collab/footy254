@@ -9,8 +9,15 @@ person, but an explicit endpoint makes both easy to trigger by hand and to
 test.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
+from config.betting_finance import (
+    MIN_DEPOSIT_KES,
+    MIN_WITHDRAWAL_KES,
+    apply_tax,
+)
 from database.betting_repository import (
     BettingError,
     InsufficientFundsError,
@@ -34,6 +41,15 @@ from database.betting_repository import (
     settle_jackpot_entries,
     shade_odds_for_exposure,
 )
+from database.wallet_mpesa_repository import (
+    attach_withdrawal_conversation_id,
+    create_deposit_request,
+    create_withdrawal_request,
+    get_deposit_request_by_checkout,
+    get_recent_pending_deposit,
+    get_user_mpesa_requests,
+    mark_withdrawal_failed,
+)
 from schemas.betting import (
     BetSlipListResponse,
     BetSlipResponse,
@@ -41,6 +57,9 @@ from schemas.betting import (
     JackpotEntryRequest,
     JackpotEntryResponse,
     JackpotResponse,
+    MpesaDepositRequest,
+    MpesaRequestResponse,
+    MpesaWithdrawRequest,
     OddsBoardEntry,
     OddsResponse,
     PlaceMultiBetRequest,
@@ -50,7 +69,10 @@ from schemas.betting import (
 )
 from security.dependencies import get_current_user, require_admin
 from services.cache import ttl_cache
+from services.mpesa_service import mpesa_service
 from services.odds_hub import odds_hub
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/betting",
@@ -207,6 +229,150 @@ def dev_topup(
     wallet["balance"] = new_balance
 
     return wallet
+
+
+@router.post("/wallet/mpesa/stk-push", response_model=MpesaRequestResponse)
+def deposit_via_mpesa(
+    body: MpesaDepositRequest,
+    current_user=Depends(get_current_user),
+):
+    """
+    Real deposit path: a genuine Safaricom Daraja STK push (sandbox), not
+    the admin-only dev_topup() above. Shares the exact same M-Pesa service
+    (services/mpesa_service.py) and callback endpoint (api/mpesa.py's
+    mpesa_callback) that FOOTY254's premium subscriptions already use —
+    there's one M-Pesa integration in this app, not two.
+    """
+
+    if body.amount < MIN_DEPOSIT_KES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum deposit is KES {MIN_DEPOSIT_KES}.",
+        )
+
+    if not mpesa_service.is_valid_phone_number(body.phone):
+        raise HTTPException(status_code=400, detail="Invalid phone number.")
+
+    existing = get_recent_pending_deposit(current_user["id"])
+    if existing is not None:
+        return existing
+
+    tax_amount, net_amount = apply_tax(body.amount)
+
+    try:
+        stk_result = mpesa_service.stk_push(
+            phone_number=body.phone,
+            amount=body.amount,
+            account_reference=f"FOOTY254-DEP-{current_user['id']}",
+            transaction_desc="FOOTY254 wallet deposit",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    request = create_deposit_request(
+        user_id=current_user["id"],
+        phone=body.phone,
+        gross_amount=body.amount,
+        tax_amount=tax_amount,
+        net_amount=net_amount,
+        checkout_request_id=stk_result.get("CheckoutRequestID"),
+        merchant_request_id=stk_result.get("MerchantRequestID"),
+    )
+
+    return request
+
+
+@router.get("/wallet/mpesa/status/{checkout_request_id}", response_model=MpesaRequestResponse)
+def deposit_status(
+    checkout_request_id: str,
+    current_user=Depends(get_current_user),
+):
+    """Polled by the frontend while an STK push is pending — the real
+    outcome arrives asynchronously at api/mpesa.py's callback, so this
+    just reflects whatever that callback has (or hasn't yet) resolved."""
+
+    request = get_deposit_request_by_checkout(checkout_request_id)
+
+    if request is None or request["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Deposit request not found.")
+
+    return request
+
+
+@router.post("/wallet/mpesa/withdraw", response_model=MpesaRequestResponse)
+def withdraw_via_mpesa(
+    body: MpesaWithdrawRequest,
+    current_user=Depends(get_current_user),
+):
+    """
+    Withdraw winnings (or any wallet balance) out to M-Pesa via a Daraja B2C
+    payout. The gross amount is debited from the wallet immediately — see
+    database.wallet_mpesa_repository.create_withdrawal_request's docstring
+    for why — and refunded automatically if the B2C payout then fails.
+    """
+
+    if body.amount < MIN_WITHDRAWAL_KES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum withdrawal is KES {MIN_WITHDRAWAL_KES}.",
+        )
+
+    if not mpesa_service.is_valid_phone_number(body.phone):
+        raise HTTPException(status_code=400, detail="Invalid phone number.")
+
+    tax_amount, net_amount = apply_tax(body.amount)
+
+    try:
+        request = create_withdrawal_request(
+            user_id=current_user["id"],
+            phone=body.phone,
+            gross_amount=body.amount,
+            tax_amount=tax_amount,
+            net_amount=net_amount,
+        )
+    except InsufficientFundsError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+
+    try:
+        b2c_result = mpesa_service.b2c_payment(
+            phone_number=body.phone,
+            amount=net_amount,
+            remarks="FOOTY254 wallet withdrawal",
+            occasion=f"withdrawal-{request['id']}",
+        )
+    except Exception as exc:
+        # Deliberately broad: whatever went wrong (Daraja rejected it,
+        # a network error, a config/certificate problem), the wallet was
+        # already debited (create_withdrawal_request, above)
+        # — if Daraja never even accepted the request, that debit has to
+        # come back now, not sit there waiting for a result callback that
+        # is never going to arrive.
+        logger.warning("B2C payment failed to send for request %s: %s", request["id"], exc)
+        mark_withdrawal_failed(request["id"], reason=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach M-Pesa for this withdrawal; your balance has been restored.",
+        ) from exc
+
+    request = attach_withdrawal_conversation_id(
+        request["id"],
+        conversation_id=b2c_result.get("ConversationID"),
+        originator_conversation_id=b2c_result.get("OriginatorConversationID"),
+    )
+
+    return request
+
+
+@router.get("/wallet/mpesa/requests", response_model=list[MpesaRequestResponse])
+def my_mpesa_requests(
+    current_user=Depends(get_current_user),
+):
+    """Deposit + withdrawal history, separate from /wallet/transactions
+    (which only shows completed ledger movements) — this also shows
+    PENDING and FAILED attempts, useful for a user wondering "where did my
+    STK prompt go" or "why didn't my withdrawal show up"."""
+
+    return get_user_mpesa_requests(current_user["id"])
 
 
 # ==========================================================

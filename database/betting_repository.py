@@ -487,6 +487,28 @@ def credit_wallet(user_id, amount, tx_type, reference=None, description=None):
     return new_balance
 
 
+def debit_wallet(user_id, amount, tx_type, reference=None, description=None):
+    """
+    Standalone debit (e.g. a withdrawal request). `amount` is given as a
+    positive number — the amount being taken OUT — and negated internally;
+    callers never pass a negative number here. Raises InsufficientFundsError
+    (via _apply_wallet_delta) if the wallet can't cover it. Commits on its
+    own, same as credit_wallet().
+    """
+
+    amount = Decimal(str(amount))
+
+    with get_connection() as conn:
+
+        with conn.cursor() as cur:
+
+            new_balance = _apply_wallet_delta(cur, user_id, -amount, tx_type, reference, description)
+
+        conn.commit()
+
+    return new_balance
+
+
 # ==========================================================
 # SINGLE / MULTI BET SLIPS
 # ==========================================================
