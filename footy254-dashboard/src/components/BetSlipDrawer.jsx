@@ -3,7 +3,11 @@ import { Link } from "react-router-dom";
 import { Ticket, X, Trash2 } from "lucide-react";
 import { useBetSlip } from "../context/BetSlipContext";
 import { useAuth } from "../context/AuthContext";
-import { selectionLabel } from "../services/betting";
+import { selectionLabel, MARKETS } from "../services/betting";
+
+function marketLabel(marketKey) {
+  return MARKETS.find((m) => m.key === marketKey)?.label || marketKey;
+}
 
 // Floating bet-slip button + slide-up drawer, present on every page inside
 // the dashboard layout (mounted once in DashboardLayout) so a selection
@@ -130,7 +134,12 @@ export default function BetSlipDrawer() {
                             {leg.homeTeam} vs {leg.awayTeam}
                           </p>
                           <p className="text-xs text-chalk/70">
-                            {selectionLabel(leg.selection, {
+                            {leg.market && leg.market !== "1X2" && (
+                              <span className="mr-1 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-chalk/60">
+                                {marketLabel(leg.market)}
+                              </span>
+                            )}
+                            {selectionLabel(leg.market || "1X2", leg.selection, {
                               home_team: leg.homeTeam,
                               away_team: leg.awayTeam,
                             })}{" "}

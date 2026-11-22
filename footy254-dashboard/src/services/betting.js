@@ -62,13 +62,44 @@ export async function getWalletTransactions() {
       : [];
 }
 
+// Paper-money self-service top-up (database/betting_wallet_topup.py on the
+// backend) - NOT a real deposit. There's no M-Pesa or payment processor
+// behind this; it exists so a signed-in user can top up their own demo
+// balance without needing admin access. See the wallet page for the
+// user-facing explanation of why.
+export async function demoTopUp(amount) {
+  return await post("/betting/wallet/demo-topup", { amount: Number(amount) });
+}
+
+// ======================================================
+// M-PESA DEPOSIT (Safaricom Daraja SANDBOX only)
+// ======================================================
+//
+// A real STK Push integration (services/mpesa_daraja.py on the backend),
+// run against Safaricom's sandbox - no real money moves, but the OAuth +
+// STK Push + callback flow is the actual Daraja API, not a fake. See the
+// wallet page for what it takes to go from this to a real production
+// deposit (a Safaricom business approval, not more code).
+
+export async function initiateMpesaDeposit({ phone, amount }) {
+  return await post("/betting/wallet/mpesa/stk-push", {
+    phone,
+    amount: Number(amount),
+  });
+}
+
+export async function getMpesaDepositStatus(checkoutRequestId) {
+  return await get(`/betting/wallet/mpesa/status/${checkoutRequestId}`);
+}
+
 // ======================================================
 // BET SLIPS
 // ======================================================
 
-export async function placeSingleBet({ matchId, selection, stake }) {
+export async function placeSingleBet({ matchId, market = "1X2", selection, stake }) {
   return await post("/betting/slips/single", {
     match_id: Number(matchId),
+    market,
     selection,
     stake: Number(stake),
     idempotency_key: newIdempotencyKey(),
@@ -79,6 +110,7 @@ export async function placeMultiBet({ legs, stake }) {
   return await post("/betting/slips/multi", {
     legs: legs.map((leg) => ({
       match_id: Number(leg.matchId),
+      market: leg.market || "1X2",
       selection: leg.selection,
     })),
     stake: Number(stake),
@@ -127,15 +159,159 @@ export const SELECTIONS = {
   AWAY: "AWAY",
 };
 
-export function selectionLabel(selection, match) {
-  if (selection === "HOME") return match?.home_team || "Home";
-  if (selection === "AWAY") return match?.away_team || "Away";
-  return "Draw";
-}
+// Goal lines with a market of their own - kept as a list (not typed out
+// per-market) so the Over/Under entries below and GOAL_LINE_MARKETS stay
+// in sync with each other and with database/betting_markets.py's
+// GOAL_LINES automatically, rather than by careful hand-editing in two
+// places every time a line is added.
+const GOAL_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5"];
 
-export function oddsFor(match, selection) {
-  if (!match) return null;
-  if (selection === "HOME") return Number(match.home_odds);
-  if (selection === "AWAY") return Number(match.away_odds);
-  return Number(match.draw_odds);
+// Correct Score: the same 4x4 grid (0-0 through 3-3) priced by
+// database/betting_markets.py's CORRECT_SCORE_GRID, plus the 3 overflow
+// buckets that make the market cover 100% of outcomes.
+const CORRECT_SCORE_SELECTIONS = [];
+for (let h = 0; h <= 3; h++) {
+  for (let a = 0; a <= 3; a++) {
+    CORRECT_SCORE_SELECTIONS.push({
+      selection: `${h}-${a}`,
+      shortLabel: `${h}-${a}`,
+      oddsField: `cs_${h}_${a}_odds`,
+    });
+  }
+}
+CORRECT_SCORE_SELECTIONS.push(
+  { selection: "OTHER_HOME_WIN", shortLabel: "Other 1", oddsField: "cs_other_home_odds" },
+  { selection: "OTHER_DRAW", shortLabel: "Other X", oddsField: "cs_other_draw_odds" },
+  { selection: "OTHER_AWAY_WIN", shortLabel: "Other 2", oddsField: "cs_other_away_odds" }
+);
+
+// Markets shown on the odds board, in display order. `key` matches the
+// `market` value sent to the backend; `oddsField` maps each selection to
+// the odds-board column it reads from (see database/betting_markets.py's
+// ODDS_COLUMN_FOR for the backend side of this same mapping). `layout`
+// tells OddsFixtureCard whether to render a row of equal-width buttons
+// ("row", the default - fine for 2-3 selections) or a wrapping grid
+// ("grid" - for Correct Score's 19 options).
+export const MARKETS = [
+  {
+    key: "1X2",
+    label: "1X2",
+    selections: [
+      { selection: "HOME", shortLabel: "1", oddsField: "home_odds" },
+      { selection: "DRAW", shortLabel: "X", oddsField: "draw_odds" },
+      { selection: "AWAY", shortLabel: "2", oddsField: "away_odds" },
+    ],
+  },
+  {
+    key: "DOUBLE_CHANCE",
+    label: "Double Chance",
+    selections: [
+      { selection: "1X", shortLabel: "1X", oddsField: "dc_1x_odds" },
+      { selection: "12", shortLabel: "12", oddsField: "dc_12_odds" },
+      { selection: "X2", shortLabel: "X2", oddsField: "dc_x2_odds" },
+    ],
+  },
+  {
+    key: "DRAW_NO_BET",
+    label: "Draw No Bet",
+    selections: [
+      { selection: "HOME", shortLabel: "Home", oddsField: "dnb_home_odds" },
+      { selection: "AWAY", shortLabel: "Away", oddsField: "dnb_away_odds" },
+    ],
+  },
+  {
+    key: "BTTS",
+    label: "BTTS",
+    selections: [
+      { selection: "YES", shortLabel: "Yes", oddsField: "btts_yes_odds" },
+      { selection: "NO", shortLabel: "No", oddsField: "btts_no_odds" },
+    ],
+  },
+  ...GOAL_LINES.map((line) => ({
+    key: `OU_${line.replace(".", "_")}`,
+    label: `O/U ${line}`,
+    selections: [
+      { selection: "OVER", shortLabel: "Over", oddsField: `over_${line.replace(".", "_")}_odds` },
+      { selection: "UNDER", shortLabel: "Under", oddsField: `under_${line.replace(".", "_")}_odds` },
+    ],
+  })),
+  {
+    key: "ODD_EVEN",
+    label: "Odd/Even",
+    selections: [
+      { selection: "ODD", shortLabel: "Odd", oddsField: "odd_total_odds" },
+      { selection: "EVEN", shortLabel: "Even", oddsField: "even_total_odds" },
+    ],
+  },
+  {
+    key: "CLEAN_SHEET_HOME",
+    label: "Clean Sheet (Home)",
+    selections: [
+      { selection: "YES", shortLabel: "Yes", oddsField: "cs_home_yes_odds" },
+      { selection: "NO", shortLabel: "No", oddsField: "cs_home_no_odds" },
+    ],
+  },
+  {
+    key: "CLEAN_SHEET_AWAY",
+    label: "Clean Sheet (Away)",
+    selections: [
+      { selection: "YES", shortLabel: "Yes", oddsField: "cs_away_yes_odds" },
+      { selection: "NO", shortLabel: "No", oddsField: "cs_away_no_odds" },
+    ],
+  },
+  {
+    key: "WIN_TO_NIL",
+    label: "Win to Nil",
+    selections: [
+      { selection: "HOME", shortLabel: "Home", oddsField: "wtn_home_odds" },
+      { selection: "AWAY", shortLabel: "Away", oddsField: "wtn_away_odds" },
+      { selection: "NONE", shortLabel: "Neither", oddsField: "wtn_none_odds" },
+    ],
+  },
+  {
+    key: "CORRECT_SCORE",
+    label: "Correct Score",
+    layout: "grid",
+    selections: CORRECT_SCORE_SELECTIONS,
+  },
+];
+
+const GOAL_LINE_MARKETS = Object.fromEntries(GOAL_LINES.map((l) => [`OU_${l.replace(".", "_")}`, l]));
+
+export function selectionLabel(market, selection, match) {
+  const home = match?.home_team || "Home";
+  const away = match?.away_team || "Away";
+
+  if (market === "DOUBLE_CHANCE") {
+    if (selection === "1X") return `${home} or Draw`;
+    if (selection === "12") return `${home} or ${away}`;
+    return `Draw or ${away}`;
+  }
+  if (market === "DRAW_NO_BET") {
+    return selection === "HOME"
+      ? `${home} (draw = stake back)`
+      : `${away} (draw = stake back)`;
+  }
+  if (market === "BTTS") return selection === "YES" ? "Both teams to score" : "Not both teams to score";
+  if (market in GOAL_LINE_MARKETS) {
+    const line = GOAL_LINE_MARKETS[market];
+    return selection === "OVER" ? `Over ${line} goals` : `Under ${line} goals`;
+  }
+  if (market === "ODD_EVEN") return selection === "ODD" ? "Odd total goals" : "Even total goals";
+  if (market === "CLEAN_SHEET_HOME") return selection === "YES" ? `${home} clean sheet` : `${home} concedes`;
+  if (market === "CLEAN_SHEET_AWAY") return selection === "YES" ? `${away} clean sheet` : `${away} concedes`;
+  if (market === "WIN_TO_NIL") {
+    if (selection === "HOME") return `${home} to win to nil`;
+    if (selection === "AWAY") return `${away} to win to nil`;
+    return "No team wins to nil";
+  }
+  if (market === "CORRECT_SCORE") {
+    if (selection === "OTHER_HOME_WIN") return `Correct score - any other ${home} win`;
+    if (selection === "OTHER_DRAW") return "Correct score - any other draw";
+    if (selection === "OTHER_AWAY_WIN") return `Correct score - any other ${away} win`;
+    return `Correct score ${selection}`;
+  }
+  if (selection === "HOME") return home;
+  if (selection === "AWAY") return away;
+  return "Draw";
 }

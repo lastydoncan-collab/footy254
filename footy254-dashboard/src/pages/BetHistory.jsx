@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { getMySlips } from "../services/betting";
+import BackButton from "../components/BackButton";
 
 const STATUS_STYLES = {
   WON: "bg-leaf/20 text-leaf",
@@ -90,6 +91,7 @@ export default function BetHistory() {
 
   return (
     <div className="space-y-5">
+      <BackButton />
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-black">My Bets</h1>
