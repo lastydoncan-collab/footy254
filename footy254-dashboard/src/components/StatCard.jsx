@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 
-export default function StatCard({ title, value, subtitle, color = "#f2545b", icon }) {
+export default function StatCard({ title, value, subtitle, color = "#22a35d", icon }) {
   return (
     <motion.div
       whileTap={{ scale: 0.98 }}

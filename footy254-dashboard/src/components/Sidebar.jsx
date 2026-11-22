@@ -57,7 +57,7 @@ function NavItem({ item, compact = false }) {
 
         ${
           isActive
-            ? "bg-signal text-ink shadow-[0_10px_30px_rgba(31,230,173,.30)] scale-[1.02]"
+            ? "bg-signal text-ink shadow-md"
             : "text-slate-300 hover:bg-white/10 hover:text-white"
         }
 
@@ -164,9 +164,8 @@ export default function Sidebar() {
           rounded-[28px]
           border
           border-white/10
-          bg-pitch/95
+          bg-pitch
           shadow-2xl
-          backdrop-blur
           lg:flex
           lg:flex-col
         "
@@ -246,12 +245,7 @@ export default function Sidebar() {
                   width="44"
                   height="44"
                   onError={() => setLogoFailed(true)}
-                  className="
-                    h-full
-                    w-full
-                    object-cover
-                    drop-shadow-[0_0_10px_rgba(31,230,173,.20)]
-                  "
+                  className="h-full w-full object-cover"
                 />
               </span>
             )}
@@ -434,10 +428,9 @@ export default function Sidebar() {
           rounded-[26px]
           border
           border-white/10
-          bg-pitch/95
+          bg-pitch
           p-2
           shadow-2xl
-          backdrop-blur
           lg:hidden
         "
       >
@@ -472,7 +465,7 @@ export default function Sidebar() {
 
             ${
               isOnSecondaryPage
-                ? "bg-signal text-ink shadow-[0_10px_30px_rgba(31,230,173,.30)]"
+                ? "bg-signal text-ink shadow-md"
                 : "text-slate-300 hover:bg-white/10 hover:text-white"
             }
           `}

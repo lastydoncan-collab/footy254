@@ -39,7 +39,7 @@ export default function Header() {
   const initial = name ? name.trim()[0].toUpperCase() : "";
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/10 bg-ink/85 backdrop-blur-md lg:pl-28">
+    <header className="sticky top-0 z-30 border-b border-white/10 bg-ink lg:pl-28">
       <div className="flag-stripe" aria-hidden="true" />
       <div className="mx-auto flex max-w-md items-center justify-between gap-3 px-4 py-3 sm:max-w-2xl lg:max-w-6xl">
         <Link to="/" className="flex flex-col leading-none" aria-label="FOOTY254 home">
@@ -55,7 +55,7 @@ export default function Header() {
             className="flex items-center gap-2 rounded-full border border-white/10 bg-pitch px-3 py-1.5 text-chalk"
           >
             <span
-              className={`h-2 w-2 rounded-full ${liveCount > 0 ? "bg-signal" : "bg-chalk/30"}`}
+              className={`h-2 w-2 rounded-full ${liveCount > 0 ? "bg-danger" : "bg-chalk/30"}`}
               aria-hidden="true"
             />
             {liveCount === null ? "Live" : liveCount > 0 ? `${liveCount} live now` : "No live games"}
