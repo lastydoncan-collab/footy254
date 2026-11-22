@@ -78,7 +78,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-10">
       {/* Welcome */}
-      <section className="overflow-hidden rounded-[30px] border border-white/10 bg-[linear-gradient(135deg,#1d4a2f,#0e2419_55%,#3a1519)] p-6 sm:p-10">
+      <section className="overflow-hidden rounded-[30px] border border-white/10 bg-gradient-to-br from-turf to-pitch p-6 sm:p-10">
         <h1 className="font-display font-display-italic text-4xl leading-[1.05] sm:text-6xl">
           Smarter picks.
           <br />

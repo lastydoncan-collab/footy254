@@ -170,7 +170,7 @@ export default function Subscriptions() {
 
       {/* Hero */}
 
-      <section className="rounded-3xl bg-gradient-to-r from-turf to-line p-8">
+      <section className="rounded-3xl border border-line bg-turf p-8">
 
         <div className="flex items-center gap-3">
 

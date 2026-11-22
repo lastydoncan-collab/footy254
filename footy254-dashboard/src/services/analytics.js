@@ -48,28 +48,28 @@ export async function loadAnalytics() {
         title: "Teams",
         value: dashboard.totalTeams,
         subtitle: "Loaded",
-        color: "#1fe6ad",
+        color: "#22a35d",
       },
 
       {
         title: "Fixtures",
         value: dashboard.totalFixtures,
         subtitle: "Upcoming",
-        color: "#38bdf8",
+        color: "#4a7f94",
       },
 
       {
         title: "Predictions",
         value: predictionCount,
         subtitle: "Generated",
-        color: "#f7c948",
+        color: "#b4902f",
       },
 
       {
         title: "Confidence",
         value: `${averageConfidence}%`,
         subtitle: "Average AI",
-        color: "#fb7185",
+        color: "#8a8f98",
       },
     ];
   } catch (error) {
@@ -83,28 +83,28 @@ export async function loadAnalytics() {
         title: "Teams",
         value: "--",
         subtitle: "Unavailable",
-        color: "#1fe6ad",
+        color: "#22a35d",
       },
 
       {
         title: "Fixtures",
         value: "--",
         subtitle: "Unavailable",
-        color: "#38bdf8",
+        color: "#4a7f94",
       },
 
       {
         title: "Predictions",
         value: "--",
         subtitle: "Unavailable",
-        color: "#f7c948",
+        color: "#b4902f",
       },
 
       {
         title: "Confidence",
         value: "--",
         subtitle: "Unavailable",
-        color: "#fb7185",
+        color: "#8a8f98",
       },
     ];
   }
@@ -144,7 +144,7 @@ export async function loadEngineStatus() {
             ? 100
             : 50,
 
-        color: "bg-[#1fe6ad]",
+        color: "bg-[#22a35d]",
       },
 
       {
@@ -157,7 +157,7 @@ export async function loadEngineStatus() {
             ? 100
             : 50,
 
-        color: "bg-[#38bdf8]",
+        color: "bg-[#4a7f94]",
       },
 
       {
@@ -170,7 +170,7 @@ export async function loadEngineStatus() {
             ? 100
             : 50,
 
-        color: "bg-[#f7c948]",
+        color: "bg-[#b4902f]",
       },
     ];
   } catch (error) {

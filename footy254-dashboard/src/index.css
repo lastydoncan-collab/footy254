@@ -8,27 +8,27 @@
 
 html {
   min-height: 100%;
-  background: #07130e;
+  background: #0b120f;
 }
 
-/* Kenyan-flag stripe: black, red, white, green. Used once in the header and
-   once in the footer so it reads as a brand mark, not decoration. */
+/* Kenyan-flag stripe: black, red, white, green, in the flag's own colours
+   (not the brand palette) so it reads as a deliberate national reference,
+   not a leftover gradient. Used once in the header and once in the footer. */
 .flag-stripe {
-  height: 4px;
+  height: 3px;
   background: linear-gradient(
     90deg,
     #000 0 25%,
-    #f2545b 25% 50%,
-    #f3efe4 50% 75%,
-    #34c077 75% 100%
+    #b3372c 25% 50%,
+    #f3f1e9 50% 75%,
+    #157a45 75% 100%
   );
 }
 
+/* Plain, flat page background. No radial glow blobs — just the surface
+   colour the rest of the UI sits on. */
 .page-glow {
-  background:
-    radial-gradient(60rem 28rem at 85% -10%, rgba(52, 192, 119, 0.16), transparent 60%),
-    radial-gradient(40rem 24rem at -10% 0%, rgba(242, 84, 91, 0.10), transparent 60%),
-    linear-gradient(180deg, #0a1b13 0%, #07130e 45%);
+  background: #0b120f;
 }
 
 .font-display-italic {
@@ -38,7 +38,7 @@ html {
 }
 
 :focus-visible {
-  outline: 2px solid #f3efe4;
+  outline: 2px solid #157a45;
   outline-offset: 2px;
 }
 
@@ -52,7 +52,7 @@ html {
 body {
   min-height: 100%;
   margin: 0;
-  background: #07130e;
+  background: #0b120f;
   color: white;
   font-family: Inter, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -77,10 +77,10 @@ button {
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 select,
 textarea {
-  background-color: #f3efe4;
-  color: #07130e;
+  background-color: #f3f1e9;
+  color: #0b120f;
   border: 1.5px solid #9fb8a9;
-  caret-color: #07130e;
+  caret-color: #0b120f;
 }
 
 input::placeholder,
@@ -92,8 +92,8 @@ textarea::placeholder {
 input:not([type="checkbox"]):not([type="radio"]):focus,
 select:focus,
 textarea:focus {
-  border-color: #f2545b;
-  box-shadow: 0 0 0 3px rgba(242, 84, 91, 0.35);
+  border-color: #157a45;
+  box-shadow: 0 0 0 3px rgba(21, 122, 69, 0.25);
   outline: none;
 }
 
@@ -107,7 +107,7 @@ textarea:disabled {
 /* Browser autofill would otherwise paint its own colours over the field. */
 input:-webkit-autofill,
 input:-webkit-autofill:focus {
-  -webkit-text-fill-color: #07130e;
-  box-shadow: 0 0 0 1000px #f3efe4 inset;
-  caret-color: #07130e;
+  -webkit-text-fill-color: #0b120f;
+  box-shadow: 0 0 0 1000px #f3f1e9 inset;
+  caret-color: #0b120f;
 }

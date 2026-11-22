@@ -79,7 +79,7 @@ export default function ResetPassword() {
             alt="FOOTY254"
             width="64"
             height="64"
-            className="h-16 w-16 rounded-full object-cover ring-2 ring-signal/40 drop-shadow-[0_0_16px_rgba(31,230,173,.25)]"
+            className="h-16 w-16 rounded-full object-cover ring-2 ring-signal/30"
           />
         </div>
 
