@@ -28,6 +28,7 @@ import Favorites from "./pages/Favorites";
 import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import Security from "./pages/Security";
+import Admin from "./pages/Admin";
 
 // Betting (PitchIQ module)
 import Betting from "./pages/Betting";
@@ -118,6 +119,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Security />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute requireAdmin>
+                <Admin />
               </ProtectedRoute>
             }
           />

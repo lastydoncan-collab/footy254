@@ -67,3 +67,9 @@ export * from "./account";
 // -------------------------
 
 export * from "./betting";
+
+// -------------------------
+// Admin
+// -------------------------
+
+export * from "./admin";
