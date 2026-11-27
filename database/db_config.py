@@ -55,7 +55,7 @@ def _connect_kwargs() -> dict:
         "user": os.getenv("FOOTY254_DB_USER", "postgres"),
         "password": password,
         "host": os.getenv("FOOTY254_DB_HOST", "localhost"),
-        "port": os.getenv("FOOTY254_DB_PORT", "5433"),
+        "port": os.getenv("FOOTY254_DB_PORT", "5432"),
         "sslmode": os.getenv("FOOTY254_DB_SSLMODE", "prefer"),
         "connect_timeout": settings.DB_CONNECT_TIMEOUT,
         "application_name": "footy254",
