@@ -88,6 +88,29 @@ def _daraja_request(method: str, url: str, **kwargs):
     raise last_error
 
 
+def _raise_for_status_with_body(response):
+    """
+    requests' own response.raise_for_status() only reports the HTTP status
+    line ("400 Client Error: Bad Request for url: ...") and silently
+    discards the response body - which for Daraja is exactly where the
+    useful part lives, e.g. {"errorCode": "400.002.02",
+    "errorMessage": "Bad Request - Invalid PartyB"}. Call this instead
+    everywhere a Daraja response is checked so that body ends up in the
+    logs and in the exception message instead of being thrown away.
+    """
+
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        body = (response.text or "").strip()
+        if body:
+            logger.error("Daraja error response body: %s", body)
+        raise requests.exceptions.HTTPError(
+            f"{exc} | Daraja response body: {body or '(empty)'}",
+            response=response,
+        ) from exc
+
+
 class MpesaService:
     """
     Handles all communication with Safaricom Daraja API.
@@ -119,7 +142,7 @@ class MpesaService:
                 auth=(MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET),
                 timeout=MPESA_REQUEST_TIMEOUT_SECONDS,
             )
-            response.raise_for_status()
+            _raise_for_status_with_body(response)
             data = response.json()
             token = data.get("access_token")
             if not token:
@@ -291,7 +314,7 @@ class MpesaService:
 
         )
 
-        response.raise_for_status()
+        _raise_for_status_with_body(response)
         result = response.json()
         if str(result.get("ResponseCode")) != "0":
             raise RuntimeError(result.get("ResponseDescription") or "Daraja rejected the STK request.")
@@ -348,7 +371,7 @@ class MpesaService:
 
         )
 
-        response.raise_for_status()
+        _raise_for_status_with_body(response)
         result = response.json()
 
         logger.info(
@@ -465,7 +488,7 @@ class MpesaService:
             timeout=MPESA_REQUEST_TIMEOUT_SECONDS,
         )
 
-        response.raise_for_status()
+        _raise_for_status_with_body(response)
         result = response.json()
 
         if str(result.get("ResponseCode")) != "0":
