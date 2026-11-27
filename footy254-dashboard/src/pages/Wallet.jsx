@@ -1,15 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDownCircle, ArrowUpCircle, Plus, RefreshCw, Smartphone, X } from "lucide-react";
+import {
+  ArrowDownCircle,
+  ArrowUpCircle,
+  Minus,
+  Plus,
+  RefreshCw,
+  Smartphone,
+  X,
+} from "lucide-react";
 import {
   getWallet,
   getWalletTransactions,
   demoTopUp,
   initiateMpesaDeposit,
   getMpesaDepositStatus,
+  initiateMpesaWithdrawal,
+  getMpesaRequests,
 } from "../services/betting";
 import BackButton from "../components/BackButton";
 
 const TOPUP_PRESETS = [100, 250, 500, 1000];
+const MIN_WITHDRAWAL_KES = 100;
+const WITHDRAWAL_TAX_RATE = 0.05;
 
 function DemoTopUpTab({ onDone }) {
   const [amount, setAmount] = useState("500");
@@ -233,6 +245,197 @@ function MpesaDepositTab({ onDone }) {
   );
 }
 
+// Withdrawals resolve via Safaricom's async B2C callback, not the request
+// response, so there's no per-id status endpoint to poll the way deposits
+// have one - instead this re-fetches the full mpesa-requests list and
+// watches for the one matching requestId to leave PENDING.
+function useWithdrawalPolling(requestId, onResolved) {
+  const pollRef = useRef(null);
+
+  useEffect(() => {
+    if (!requestId) return undefined;
+
+    let attempts = 0;
+    const MAX_ATTEMPTS = 40; // ~2 minutes at 3s intervals
+
+    pollRef.current = setInterval(async () => {
+      attempts += 1;
+      try {
+        const requests = await getMpesaRequests();
+        const match = requests.find((r) => r.id === requestId);
+        if (match && match.status && match.status !== "PENDING") {
+          clearInterval(pollRef.current);
+          onResolved(match);
+        } else if (attempts >= MAX_ATTEMPTS) {
+          clearInterval(pollRef.current);
+          onResolved({ status: "TIMEOUT" });
+        }
+      } catch {
+        // transient network error - keep polling, the interval will just
+        // try again in 3s; only MAX_ATTEMPTS gives up for good.
+      }
+    }, 3000);
+
+    return () => clearInterval(pollRef.current);
+  }, [requestId, onResolved]);
+}
+
+function WithdrawTab({ balance, onDone }) {
+  const [phone, setPhone] = useState("");
+  const [amount, setAmount] = useState(String(MIN_WITHDRAWAL_KES));
+  const [stage, setStage] = useState("form"); // form | waiting | success | failed
+  const [error, setError] = useState("");
+  const [requestId, setRequestId] = useState(null);
+
+  const handleResolved = useCallback(
+    (result) => {
+      if (result.status === "COMPLETED") {
+        setStage("success");
+        setTimeout(onDone, 1200);
+      } else if (result.status === "TIMEOUT") {
+        setError("Still processing - check back shortly; your balance updates automatically.");
+        setStage("form");
+      } else {
+        setError(result.failure_reason || "The withdrawal failed; your balance was refunded.");
+        setStage("failed");
+      }
+    },
+    [onDone]
+  );
+
+  useWithdrawalPolling(stage === "waiting" ? requestId : null, handleResolved);
+
+  const value = Number(amount) || 0;
+  const netPreview = (value * (1 - WITHDRAWAL_TAX_RATE)).toFixed(2);
+
+  async function handleSubmit() {
+    setError("");
+    if (!value || value < MIN_WITHDRAWAL_KES) {
+      setError(`Minimum withdrawal is KES ${MIN_WITHDRAWAL_KES}.`);
+      return;
+    }
+    if (!phone.trim()) {
+      setError("Enter the M-Pesa number to receive the payout.");
+      return;
+    }
+    if (balance != null && value > Number(balance)) {
+      setError("That's more than your available balance.");
+      return;
+    }
+    setStage("waiting");
+    try {
+      const res = await initiateMpesaWithdrawal({ phone, amount: value });
+      setRequestId(res.id);
+    } catch (err) {
+      setError(err?.message || "Could not start the withdrawal.");
+      setStage("form");
+    }
+  }
+
+  if (stage === "waiting") {
+    return (
+      <div className="py-6 text-center">
+        <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-4 border-signal/20 border-t-signal" />
+        <p className="font-bold text-chalk">Sending your payout</p>
+        <p className="mt-1 text-sm text-chalk/60">
+          KES {netPreview} is on its way to {phone}. This can take a moment to confirm.
+        </p>
+        <p className="mt-3 text-xs text-chalk/40">Sandbox mode - no real money moves.</p>
+      </div>
+    );
+  }
+
+  if (stage === "success") {
+    return (
+      <div className="py-6 text-center">
+        <p className="mt-2 font-bold text-chalk">Withdrawal sent</p>
+        <p className="mt-1 text-sm text-chalk/60">Your wallet balance will update in a moment.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="mb-4 rounded-xl border border-gold/20 bg-gold/10 p-3 text-xs text-chalk/80">
+        Sends a real Safaricom B2C payout through Daraja's sandbox - minimum KES{" "}
+        {MIN_WITHDRAWAL_KES}. A 5% withdrawal tax applies, deducted from the amount you enter
+        (not added on top). The full amount is held from your wallet the moment you submit this,
+        and refunded automatically if the payout doesn't go through.
+      </p>
+
+      <label className="block text-xs font-semibold uppercase tracking-wide text-chalk/60">
+        M-Pesa phone number
+      </label>
+      <input
+        type="tel"
+        placeholder="07XXXXXXXX"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        className="mt-1 w-full rounded-xl border border-white/10 bg-ink px-3 py-2 text-chalk outline-none focus:border-signal"
+      />
+
+      <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-chalk/60">
+        Amount (KES)
+      </label>
+      <input
+        type="number"
+        min={MIN_WITHDRAWAL_KES}
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        className="mt-1 w-full rounded-xl border border-white/10 bg-ink px-3 py-2 text-chalk outline-none focus:border-signal"
+      />
+
+      {value > 0 && (
+        <p className="mt-2 text-xs text-chalk/50">
+          You'll receive <span className="font-bold text-chalk/80">KES {netPreview}</span> after
+          the 5% tax ({(value * WITHDRAWAL_TAX_RATE).toFixed(2)}).
+        </p>
+      )}
+
+      {error && (
+        <p className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-300">
+          {error}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={handleSubmit}
+        className="mt-4 w-full rounded-xl bg-signal px-4 py-2.5 text-sm font-bold text-ink hover:opacity-90"
+      >
+        Withdraw KES {amount || 0}
+      </button>
+    </div>
+  );
+}
+
+function WithdrawModal({ balance, onClose, onDone }) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+      />
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-pitch p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-black text-chalk">Withdraw</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1.5 text-chalk/60 hover:bg-white/10 hover:text-chalk"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <WithdrawTab balance={balance} onDone={onDone} />
+      </div>
+    </div>
+  );
+}
+
 function AddFundsModal({ onClose, onDone }) {
   const [tab, setTab] = useState("mpesa");
 
@@ -246,7 +449,7 @@ function AddFundsModal({ onClose, onDone }) {
       />
       <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-pitch p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-black text-chalk">Add funds</h2>
+          <h2 className="text-lg font-black text-chalk">Deposit</h2>
           <button
             type="button"
             onClick={onClose}
@@ -295,13 +498,25 @@ const REASON_LABELS = {
   demo_topup: "Demo top-up",
   mpesa_sandbox_deposit: "M-Pesa deposit (sandbox)",
   bet_void_refund: "Bet voided - stake refunded",
+  DEPOSIT: "M-Pesa deposit",
+  WITHDRAWAL: "M-Pesa withdrawal",
+  WITHDRAWAL_REVERSAL: "Withdrawal refunded",
 };
 
 function TransactionRow({ tx }) {
   const amount = Number(tx.amount ?? 0);
   const credit = amount >= 0;
   const when = tx.created_at ? new Date(tx.created_at) : null;
-  const label = REASON_LABELS[tx.reason] || tx.reason || tx.type || (credit ? "Credit" : "Debit");
+  // The backend already writes a human-readable description for most
+  // entries (e.g. "M-Pesa withdrawal (sandbox) — KES 95.00 to be sent,
+  // KES 5.00 tax.") - prefer that over guessing a label from the raw type.
+  const label =
+    tx.description ||
+    REASON_LABELS[tx.reason] ||
+    REASON_LABELS[tx.type] ||
+    tx.reason ||
+    tx.type ||
+    (credit ? "Credit" : "Debit");
 
   return (
     <div className="flex items-center justify-between gap-3 border-b border-white/5 py-3 last:border-0">
@@ -335,6 +550,7 @@ export default function Wallet() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAddFunds, setShowAddFunds] = useState(false);
+  const [showWithdraw, setShowWithdraw] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -366,16 +582,24 @@ export default function Wallet() {
         <div>
           <h1 className="text-3xl font-black">Wallet</h1>
           <p className="mt-1 text-slate-400">
-            Paper-money balance for the FOOTY254 betting module. No real deposits or withdrawals.
+            Deposit via M-Pesa to fund your bets, or withdraw your balance back out - both run
+            through Safaricom's Daraja sandbox.
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <button
             onClick={() => setShowAddFunds(true)}
             className="flex items-center gap-2 rounded-xl bg-signal px-4 py-2 text-sm font-bold text-ink hover:opacity-90"
           >
             <Plus size={16} />
-            Add funds
+            Deposit
+          </button>
+          <button
+            onClick={() => setShowWithdraw(true)}
+            className="flex items-center gap-2 rounded-xl border border-white/10 bg-pitch px-4 py-2 text-sm font-bold text-chalk hover:border-signal/40"
+          >
+            <Minus size={16} />
+            Withdraw
           </button>
           <button
             onClick={load}
@@ -393,6 +617,17 @@ export default function Wallet() {
           onDone={async () => {
             await load();
             setShowAddFunds(false);
+          }}
+        />
+      )}
+
+      {showWithdraw && (
+        <WithdrawModal
+          balance={wallet?.balance}
+          onClose={() => setShowWithdraw(false)}
+          onDone={async () => {
+            await load();
+            setShowWithdraw(false);
           }}
         />
       )}
@@ -419,11 +654,10 @@ export default function Wallet() {
               KES {Number(wallet.balance ?? 0).toFixed(2)}
             </p>
             <p className="mt-3 text-xs text-chalk/50">
-              Real M-Pesa deposits aren't wired up here on purpose - taking actual money
-              needs a licensed payment integration (Safaricom Daraja API, a PCI-compliant
-              callback handler, reconciliation, the works), which belongs in FOOTY254's own
-              payment infrastructure rather than bolted onto a demo. "Add funds" above tops
-              up this paper wallet only.
+              Deposits and withdrawals both run through Safaricom's Daraja sandbox - real STK
+              push and B2C payout requests, just against Safaricom's test environment rather
+              than production, so no real money moves yet. "Demo top-up" under Deposit adds
+              paper balance only, for quick testing without M-Pesa at all.
             </p>
           </div>
 
