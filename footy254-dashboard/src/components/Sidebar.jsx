@@ -11,6 +11,7 @@ import {
   Radio,
   Settings,
   Shield,
+  ShieldCheck,
   Sparkles,
   LogOut,
   User,
@@ -21,7 +22,7 @@ import {
 
 import { useAuth } from "../context/AuthContext";
 
-const navItems = [
+const baseNavItems = [
   { name: "Home", path: "/", icon: Home, primary: true },
   { name: "Live", path: "/live", icon: Radio, primary: true },
   { name: "Predict", path: "/predictions", icon: Sparkles, primary: true },
@@ -33,6 +34,10 @@ const navItems = [
   { name: "Security", path: "/security", icon: Shield },
   { name: "Settings", path: "/settings", icon: Settings },
 ];
+
+// Only shown to admins - kept out of baseNavItems so a non-admin never even
+// has the route in their nav list to notice.
+const adminNavItem = { name: "Admin", path: "/admin", icon: ShieldCheck };
 
 function NavItem({ item, compact = false }) {
   const Icon = item.icon;
@@ -71,21 +76,24 @@ function NavItem({ item, compact = false }) {
 }
 
 export default function Sidebar() {
-  const { authenticated, user, logout } = useAuth();
+  const { authenticated, user, isAdmin, logout } = useAuth();
   const location = useLocation();
 
-  // navItems never changes across renders, so deriving these on every
-  // render (including on every keystroke elsewhere in the app, since
-  // Sidebar stays mounted across route changes) is wasted work for no
-  // visual benefit — memoize them once.
+  // navItems only changes when admin status changes (practically: once per
+  // session, on login) — memoize on that instead of recomputing per render.
+  const navItems = useMemo(
+    () => (isAdmin ? [...baseNavItems, adminNavItem] : baseNavItems),
+    [isAdmin]
+  );
+
   const primaryItems = useMemo(
     () => navItems.filter((item) => item.primary),
-    []
+    [navItems]
   );
 
   const secondaryItems = useMemo(
     () => navItems.filter((item) => !item.primary),
-    []
+    [navItems]
   );
 
   // The bottom nav only has room for 5 slots on mobile: the 4 primary
