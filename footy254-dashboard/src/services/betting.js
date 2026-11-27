@@ -93,6 +93,27 @@ export async function getMpesaDepositStatus(checkoutRequestId) {
 }
 
 // ======================================================
+// M-PESA WITHDRAWAL (Safaricom Daraja B2C - SANDBOX only)
+// ======================================================
+//
+// The payout itself resolves asynchronously (Safaricom's B2C result
+// callback, not this response), so there's no per-id status endpoint the
+// way deposits have one - getMpesaRequests() below is how the UI polls
+// for the outcome instead.
+
+export async function initiateMpesaWithdrawal({ phone, amount }) {
+  return await post("/betting/wallet/mpesa/withdraw", {
+    phone,
+    amount: Number(amount),
+  });
+}
+
+export async function getMpesaRequests() {
+  const data = await get("/betting/wallet/mpesa/requests");
+  return Array.isArray(data) ? data : Array.isArray(data?.requests) ? data.requests : [];
+}
+
+// ======================================================
 // BET SLIPS
 // ======================================================
 
